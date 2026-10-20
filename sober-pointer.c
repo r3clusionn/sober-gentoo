@@ -8,7 +8,13 @@
  * Matrix) and keeps the pointer inside the part of the window Sober maps onto
  * the whole of it (XFixes pointer barriers). When focus leaves, the matrices
  * are restored, the barriers go, and the pointer is moved to where Roblox's
- * cursor was.
+ * cursor was; when focus comes back, Sober halves the position itself.
+ * It moves the pointer at no other time: Sober answers outside warps by
+ * moving the pointer again. Roblox's mouse lock (shift-lock, first person)
+ * can't be helped from here: Sober turns the camera by the pointer's own
+ * movement, never recentres it, and shows no sign of the lock to other
+ * clients (no grab, same cursor), so the cursor shows up where the pointer
+ * drifted when the lock ends.
  *
  * Started by the flatpak launcher for every Sober run; one instance at a
  * time; exits 5 s after the last Sober window closes (or after 3 minutes if
@@ -43,8 +49,12 @@ static volatile sig_atomic_t quit;
 static struct { int id; float ctm[9]; } dev[MAXDEV];
 static int ndev;
 static PointerBarrier bar[4];
-static int engaged, bx, by; /* the window's root position while engaged */
+static int engaged, bx, by, bw, bh, sw, sh; /* the window's root geometry while engaged; the screen */
 static Window game;
+
+static FILE *dbg; /* SOBER_POINTER_LOG=path */
+#define LOG(...) do { if (dbg) { fprintf(dbg, "%.3f ", now()); fprintf(dbg, __VA_ARGS__); fflush(dbg); } } while (0)
+static double now(void);
 
 static void on_signal(int s) { (void)s; quit = 1; }
 
@@ -155,34 +165,35 @@ static void engage(Window w)
 	}
 	XIFreeDeviceInfo(info);
 
-	/* each barrier lets the pointer in but not out */
-	bar[0] = XFixesCreatePointerBarrier(d, root, bx, by, bx, b, BarrierPositiveX, 0, NULL);
-	bar[1] = XFixesCreatePointerBarrier(d, root, r, by, r, b, BarrierNegativeX, 0, NULL);
-	bar[2] = XFixesCreatePointerBarrier(d, root, bx, by, r, by, BarrierPositiveY, 0, NULL);
-	bar[3] = XFixesCreatePointerBarrier(d, root, bx, b, r, b, BarrierNegativeY, 0, NULL);
-
-	/* keep Roblox's cursor where the real one was */
-	Window rw, cw;
-	int px, py, wx, wy;
-	unsigned mask;
-	if (XQueryPointer(d, root, &rw, &cw, &px, &py, &wx, &wy, &mask) && px >= bx && py >= by &&
-	    px < bx + wa.width && py < by + wa.height)
-		XWarpPointer(d, None, root, 0, 0, 0, 0, bx + (int)((px - bx) / scale), by + (int)((py - by) / scale));
+	/* each barrier lets the pointer in but not out; they run the whole width or
+	 * height of the screen so no diagonal move slips past a corner */
+	bar[0] = XFixesCreatePointerBarrier(d, root, bx, 0, bx, sh, BarrierPositiveX, 0, NULL);
+	bar[1] = XFixesCreatePointerBarrier(d, root, r, 0, r, sh, BarrierNegativeX, 0, NULL);
+	bar[2] = XFixesCreatePointerBarrier(d, root, 0, by, sw, by, BarrierPositiveY, 0, NULL);
+	bar[3] = XFixesCreatePointerBarrier(d, root, 0, b, sw, b, BarrierNegativeY, 0, NULL);
+	/* No warp: a moment after its window gets focus, Sober halves the
+	 * pointer's position itself, which puts Roblox's cursor where the real
+	 * one was. */
 	XSync(d, False);
 	engaged = 1;
 	game = w;
+	bw = wa.width;
+	bh = wa.height;
+	LOG("engage 0x%lx at %d,%d %dx%d box to %d,%d\n", w, bx, by, wa.width, wa.height, r, b);
 	XSelectInput(d, w, StructureNotifyMask);
 }
 
-static void disengage(void)
+/* warp: leaving Sober, so put the real pointer where Roblox's cursor is */
+static void disengage(int warp)
 {
 	if (!engaged) return;
+	LOG("disengage%s\n", warp ? "" : " (geometry)");
 	for (int i = 0; i < 4; i++) XFixesDestroyPointerBarrier(d, bar[i]);
 	for (int i = 0; i < ndev; i++) set_ctm(dev[i].id, dev[i].ctm);
 	Window rw, cw;
 	int px, py, wx, wy;
 	unsigned mask;
-	if (XQueryPointer(d, root, &rw, &cw, &px, &py, &wx, &wy, &mask) && px >= bx && py >= by)
+	if (warp && XQueryPointer(d, root, &rw, &cw, &px, &py, &wx, &wy, &mask) && px >= bx && py >= by)
 		XWarpPointer(d, None, root, 0, 0, 0, 0, bx + (int)((px - bx) * scale), by + (int)((py - by) * scale));
 	XSync(d, False);
 	engaged = 0;
@@ -197,9 +208,12 @@ int main(void)
 	snprintf(lock, sizeof lock, "%s/sober-pointer.lock", getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "/tmp");
 	int lfd = open(lock, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
 	if (lfd < 0 || flock(lfd, LOCK_EX | LOCK_NB)) return 0; /* already running */
+	if (getenv("SOBER_POINTER_LOG")) dbg = fopen(getenv("SOBER_POINTER_LOG"), "a");
 	if (!(d = XOpenDisplay(NULL))) return 1;
 	XSetErrorHandler(ignore_errors); /* windows vanish between lookups */
 	root = DefaultRootWindow(d);
+	sw = DisplayWidth(d, DefaultScreen(d));
+	sh = DisplayHeight(d, DefaultScreen(d));
 	a_active = XInternAtom(d, "_NET_ACTIVE_WINDOW", False);
 	a_clients = XInternAtom(d, "_NET_CLIENT_LIST", False);
 	a_ctm = XInternAtom(d, "Coordinate Transformation Matrix", False);
@@ -213,18 +227,19 @@ int main(void)
 	sigaction(SIGHUP, &sa, NULL);
 	XSelectInput(d, root, PropertyChangeMask);
 
-	double start = now(), last_seen = 0;
+	double start = now(), last_seen = 0, last_check = 0;
 	int recheck = 1;
 	while (!quit) {
-		if (recheck) {
+		double t = now();
+		if (recheck || t - last_check >= 1) { /* focus changes, and once a second: is Sober still there */
 			Window a = window_prop(a_active, 0);
 			int want = is_game(a);
-			if (engaged && (!want || a != game)) disengage();
+			if (engaged && (!want || a != game)) disengage(1);
 			if (want && !engaged) engage(a);
-			if (sober_running()) last_seen = now();
+			if (sober_running()) last_seen = t;
+			last_check = t;
 			recheck = 0;
 		}
-		double t = now();
 		if (last_seen ? t - last_seen > 5 : t - start > 180) break;
 		while (XPending(d)) {
 			XEvent ev;
@@ -232,7 +247,7 @@ int main(void)
 			if (ev.type == PropertyNotify && (ev.xproperty.atom == a_active || ev.xproperty.atom == a_clients))
 				recheck = 1;
 			else if (ev.type == ConfigureNotify && engaged && ev.xconfigure.window == game) {
-				disengage(); /* moved, resized or full-screen: new box */
+				disengage(0); /* moved, resized or full-screen: new box, same pointer */
 				recheck = 1;
 			} else if (ev.type == UnmapNotify || ev.type == DestroyNotify)
 				recheck = 1;
@@ -240,9 +255,8 @@ int main(void)
 		if (recheck) continue;
 		struct pollfd p = { ConnectionNumber(d), POLLIN, 0 };
 		poll(&p, 1, 1000);
-		if (!(p.revents & POLLIN)) recheck = 1; /* once a second: is Sober still there */
 	}
-	disengage();
+	disengage(1);
 	XCloseDisplay(d);
 	return 0;
 }

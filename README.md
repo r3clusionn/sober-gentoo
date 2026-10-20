@@ -9,7 +9,7 @@ Roblox on a minimal Gentoo laptop through [Sober](https://sober.vinegarhq.org/),
 - **Flatpak 1.18.4 from source, no Portage packages:** ostree 2026.4, GnuPG 2.5 with gpgme 2.2 (Flathub signatures are checked), AppStream 1.2.1, libseccomp, libarchive, json-glib, libxmlb and libfyaml go into one prefix with an rpath, so nothing needs `LD_LIBRARY_PATH`. bubblewrap and xdg-dbus-proxy come from Flatpak's own subprojects. Every tarball is checked against its upstream sha256.
 - **Build-only tools stay out of the system:** m4, bison, gperf and pyparsing are built into a scratch directory, and glib's `glib-mkenums`, `glib-genmarshal` and `gdbus-codegen` (separate packages on Gentoo) are taken from the matching glib tarball.
 - **`flatpak` launcher:** puts the prefix on `PATH` (gpgme finds `gpg` there) and starts the sound server before any `flatpak run` of Sober, which crashes at start without one. Every way of starting Sober goes through it, Voidstrap included.
-- **`sober-pointer`:** Sober's HiDPI mode doesn't work on X11 (its own troubleshooting page says so): Roblox is drawn at the display scale, but pointer positions arrive in real pixels and are scaled again, so the cursor moves twice as fast as the desktop's and runs off the right and bottom. While Sober's game window has focus, `sober-pointer` scales pointer motion by 1/scale (each pointer's transformation matrix) and keeps the pointer in the part of the window Sober maps onto the whole of it (XFixes pointer barriers); when focus leaves it restores both and puts the pointer where Roblox's cursor was. The `flatpak` launcher starts it for every Sober run.
+- **`sober-pointer`:** Sober's HiDPI mode doesn't work on X11 (its own troubleshooting page says so): Roblox is drawn at the display scale, but pointer positions arrive in real pixels and are scaled again, so the cursor moves twice as fast as the desktop's and runs off the right and bottom. While Sober's game window has focus, `sober-pointer` scales pointer motion by 1/scale (each pointer's transformation matrix) and keeps the pointer in the part of the window Sober maps onto the whole of it (XFixes pointer barriers); when focus leaves it restores both and puts the pointer where Roblox's cursor was (when focus comes back, Sober halves the position itself). It moves the pointer at no other time, because Sober answers outside warps by moving it again. The `flatpak` launcher starts it for every Sober run.
 - **`voidstrap` launcher:** Voidstrap draws through wgpu, which presents nothing into X's 10-bit windows at depth 30, so its settings window stayed black. The launcher preloads [xcb8bit](https://github.com/r3clusionn/scripts) so Voidstrap alone gets 8-bit windows.
 - **A FastFlag preset for the most frames** (`voidstrap/ClientAppSettings.json`), using only flags on Roblox's allowlist.
 
@@ -73,6 +73,7 @@ The FastFlag preset: graphics quality pinned at level 1 of 21 (`DFIntDebugFRMQua
 | `~/.local/share/flatpak` (user installation) | 1.7 GB: GNOME 51 runtime 1.1 GB, Mesa 26.2.2 (`GL.default` and `-extra`) 538 MB, codecs 44 MB, Sober 18 MB |
 | Roblox, default cap, windowed | 60 frames/s copied at 120 Hz |
 | Roblox, uncapped, full-screen | 460 to 1060 frames/s rendered, 120 flips/s, the rest replaced before they're shown |
+| Roblox at 120 FPS, power plans | performance: 48 W, fans 6,400 rpm, 108 FPS; balanced: 32 W, fans 4,800 rpm and falling, 104 to 119 FPS |
 | Voidstrap settings window | no frame in 8 s (black) without xcb8bit, first frame after 330 ms with it |
 
 Frame counts come from Present's CompleteNotify events on Sober's window (frames, copy or flip, and the panel's refresh count).
@@ -83,13 +84,14 @@ Frame counts come from Present's CompleteNotify events on Sober's window (frames
 - Flathub's GPG-signed summary is verified with the GnuPG built here.
 - Voidstrap 1.1.3.7 finds Sober through `flatpak info --user`, starts it with `flatpak run`, applies the FastFlags to Sober's `config.json` and draws all its windows with the launcher.
 - The sound server is started for Sober from both `sober` and Voidstrap.
-- `sober-pointer`, with a test window named like Sober's (1582x1764 at 1,35): the pointer was moved to half its offset on focus, relative motion stopped at 791,916 and 1,35 (the box Sober maps onto the window), the touchpad's matrix read 0.5 while focused and 1.0 after, and it exited 5 s after the window closed.
+- `sober-pointer`, with a test window named like Sober's (1582x1764 at 1,35): the pointer was moved to half its offset on focus, relative motion stopped at 791,916 and 1,35 (the box Sober maps onto the window), the touchpad's matrix read 0.5 while focused and 1.0 after, and it exited 5 s after the window closed. In Roblox, traced at 2 ms: Sober halves the pointer 0.2 to 0.7 s after its window gets focus, and again a few milliseconds after any outside warp; with shift-lock on, the camera turned with an unpinned pointer (26,188 of 76,800 sampled pixels changed) and didn't with the pointer pinned by barriers (155).
 
 ## Limits
 
 - Tested on one laptop. `build.sh` reads glib's `.pc` files from `/usr/lib64/pkgconfig` (Gentoo's layout).
 - User installations only: no system helper, so no system-wide installs and no `revokefs`.
-- Sober's HiDPI mode on X11 also puts the text being typed into a box at half its position and size; `sober-pointer` only fixes the mouse. Camera turning (first person, right button) may still be faster than the desktop: games usually read raw relative motion, which the matrix doesn't scale (not measured); Roblox's camera sensitivity setting covers it.
+- Sober's HiDPI mode on X11 also puts the text being typed into a box at half its position and size; `sober-pointer` only fixes the mouse.
+- Roblox's mouse lock (shift-lock, first person) is emulated badly by Sober on X11: it turns the camera from the pointer's own movement and never moves the pointer back to the middle, so turning stops at the edge of the box, and when the lock ends Roblox's cursor shows up wherever the pointer drifted. Nothing outside Sober can see the lock (no pointer grab, the cursor doesn't change), so `sober-pointer` can't correct it.
 - No xdg-desktop-portal here: GameMode can't register through it (a warning only); opening links from Sober is untested.
 - `flatpak` doesn't update itself; run `build.sh` again after changing the versions in `fetch.sh`.
 
