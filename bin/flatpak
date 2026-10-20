@@ -1,9 +1,14 @@
 #!/bin/sh
 # Flatpak built from source into ~/.local/opt/flatpak (0 Portage packages).
 # gpgme finds gpg/gpgconf through PATH. Rebuild: ~/.local/opt/flatpak/tools/build.sh
-# Sober crashes at start without a sound server, and audio is on demand here;
-# this covers every launcher (sober, Voidstrap), which all go through flatpak run.
+# Every launcher (sober, Voidstrap) starts Sober through `flatpak run`, so:
+# - Sober crashes at start without a sound server, and audio is on demand here;
+# - sober-pointer fixes the mouse speed and edges of Sober's HiDPI mode on X11
+#   (it waits for Sober's window and exits after it closes).
 case " $* " in
-*" run "*org.vinegarhq.Sober*) [ -x /usr/local/bin/audio ] && /usr/local/bin/audio ensure ;;
+*" run "*org.vinegarhq.Sober*)
+	[ -x /usr/local/bin/audio ] && /usr/local/bin/audio ensure
+	command -v sober-pointer >/dev/null && setsid -f sober-pointer </dev/null >/dev/null 2>&1
+	;;
 esac
 PATH=$HOME/.local/opt/flatpak/bin:$PATH exec "$HOME/.local/opt/flatpak/bin/flatpak" "$@"
