@@ -1,0 +1,9 @@
+#!/bin/sh
+# Flatpak built from source into ~/.local/opt/flatpak (0 Portage packages).
+# gpgme finds gpg/gpgconf through PATH. Rebuild: ~/.local/opt/flatpak/tools/build.sh
+# Sober crashes at start without a sound server, and audio is on demand here;
+# this covers every launcher (sober, Voidstrap), which all go through flatpak run.
+case " $* " in
+*" run "*org.vinegarhq.Sober*) [ -x /usr/local/bin/audio ] && /usr/local/bin/audio ensure ;;
+esac
+PATH=$HOME/.local/opt/flatpak/bin:$PATH exec "$HOME/.local/opt/flatpak/bin/flatpak" "$@"

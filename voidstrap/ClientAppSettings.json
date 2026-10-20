@@ -1,0 +1,13 @@
+{
+  "DFIntDebugFRMQualityLevelOverride": "1",
+  "FIntDebugForceMSAASamples": "1",
+  "DFFlagDebugPauseVoxelizer": "True",
+  "FIntFRMMinGrassDistance": "0",
+  "FIntFRMMaxGrassDistance": "0",
+  "DFIntCSGLevelOfDetailSwitchingDistance": "0",
+  "DFIntCSGLevelOfDetailSwitchingDistanceL12": "0",
+  "DFIntCSGLevelOfDetailSwitchingDistanceL23": "0",
+  "DFIntCSGLevelOfDetailSwitchingDistanceL34": "0",
+  "DFFlagTextureQualityOverrideEnabled": "True",
+  "DFIntTextureQualityOverride": "0"
+}

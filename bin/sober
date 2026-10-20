@@ -1,0 +1,4 @@
+#!/bin/sh
+# Sober (Roblox) through the Flatpak in ~/.local/opt/flatpak; the flatpak
+# wrapper starts the sound server first.
+exec "$HOME/.local/bin/flatpak" run org.vinegarhq.Sober "$@"

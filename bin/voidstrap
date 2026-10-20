@@ -1,0 +1,8 @@
+#!/bin/sh
+# Voidstrap (Roblox launcher for Sober) from ~/.local/opt/voidstrap.
+# It draws through wgpu/Vulkan, which presents nothing into X's 10-bit
+# (depth 30) windows: the settings window stayed black. xcb8bit gives this
+# one program 8-bit windows; what it starts keeps 10 bits.
+exe=$HOME/.local/opt/voidstrap/Voidstrap
+export LD_PRELOAD="/usr/local/lib/xcb8bit.so${LD_PRELOAD:+:$LD_PRELOAD}" XCB8BIT_EXE="$exe"
+exec "$exe" "$@"
