@@ -18,12 +18,16 @@
  * cursor). Roblox does draw its shift-lock crosshair in the middle of the
  * screen, so 150 ms after every Shift press (XInput2 raw key events, no grab)
  * and every 2 s while Sober has focus, a 69x69 square there is read and the
- * ring looked for: white at radius ~23 with black edges inside and out. When
- * Roblox locks the mouse in first person (no crosshair) SDL puts the pointer on
- * the window's exact centre, a pixel the barriers keep it from reaching
- * otherwise, so that counts as locked too. While locked the barriers are off,
- * so turning only stops at the screen edge; on unlock the pointer goes to the
- * middle of Roblox's screen, as on Windows.
+ * ring looked for: white at radius ~23 with black edges inside and out.
+ * While locked the barriers are off, so turning only stops at the screen
+ * edge; on unlock the pointer goes to the middle of Roblox's screen, as on
+ * Windows. A lock counts as on after one check sees the crosshair, as off
+ * after two in a row 0.3 s apart don't (the score dips while turning). When a
+ * lock starts or ends SDL also puts the pointer on the window's exact centre
+ * in pixels, which Sober shows at the bottom-right corner; while unlocked,
+ * that is moved to the middle too, and while locked, within 0.6 s of a Shift,
+ * it ends the lock at once (about 30 ms after the key, not the crosshair's 0.45 s). First person (a lock without the
+ * crosshair) isn't followed.
  *
  * Started by the flatpak launcher for every Sober run; one instance at a
  * time; exits 5 s after the last Sober window closes (or after 3 minutes if
@@ -69,9 +73,13 @@ static int have_bars;
 static int engaged, bx, by, bw, bh, sw, sh; /* the window's root geometry while engaged; the screen */
 static Window game;
 
-enum { NONE, CROSSHAIR, CENTRED }; /* why the mouse counts as locked */
+enum { NONE, CROSSHAIR }; /* why the mouse counts as locked */
 static int locked;
 static double check_at, last_check_icon; /* next and last look for the crosshair */
+static int second_check;   /* look once more 0.3 s after the first check after Shift */
+static int off_votes;      /* checks in a row without the crosshair while locked */
+static double last_shift;  /* SDL centres the pointer ~30 ms after the Shift that ends a lock */
+static double locked_since; /* ...and ~250 ms after the one that starts it: not an unlock */
 
 static FILE *dbg; /* SOBER_POINTER_LOG=path */
 static double now(void)
@@ -265,6 +273,7 @@ static void set_lock(int how, const char *why)
 	if (how == locked) return;
 	int was = locked;
 	locked = how;
+	if (how) locked_since = now();
 	LOG("lock %s (%s)\n", how ? "on" : "off", why);
 	if (!engaged) return;
 	if (how)
@@ -309,6 +318,7 @@ static int crosshair(void)
 		hits += bright && dark_in && dark_out;
 	}
 	XDestroyImage(im);
+	LOG("crosshair score %d/16\n", hits);
 	return hits >= 11;
 }
 
@@ -316,23 +326,46 @@ static void check_crosshair(const char *why)
 {
 	check_at = 0;
 	last_check_icon = now();
-	if (!engaged || locked == CENTRED) return;
+	if (second_check) { /* Roblox may not have drawn the change yet */
+		second_check = 0;
+		check_at = last_check_icon + 0.3;
+	}
+	if (!engaged) return;
 	int on = crosshair();
-	if (on >= 0) set_lock(on ? CROSSHAIR : NONE, why);
+	if (on < 0) return;
+	if (on) {
+		off_votes = 0;
+		set_lock(CROSSHAIR, why);
+	} else if (locked && ++off_votes < 2) { /* the score dips while turning: look again */
+		if (!check_at) check_at = now() + 0.3;
+	} else {
+		off_votes = 0;
+		set_lock(NONE, why);
+	}
 }
 
-/* every 10 ms while engaged and unlocked: has SDL centred the pointer? */
+/* Every 10 ms while engaged and unlocked. When the mouse lock starts or ends,
+ * SDL puts the pointer on the window's exact centre in pixels (a pixel the
+ * barriers keep motion from reaching), which Sober shows at the bottom-right
+ * corner; move it to the middle of the box instead. */
 static void check_centre(void)
 {
 	int px, py;
 	pointer(&px, &py);
-	if (px == bx + bw / 2 && py == by + bh / 2) set_lock(CENTRED, "pointer centred");
+	if (px != bx + bw / 2 || py != by + bh / 2) return;
+	int nx = bx + (int)(bw / 2 / scale), ny = by + (int)(bh / 2 / scale);
+	LOG("pointer centred by Sober, moved to %d,%d\n", nx, ny);
+	warp(nx, ny);
 }
 
 static void raw_key(int keycode)
 {
 	KeySym k = XkbKeycodeToKeysym(d, keycode, 0, 0);
-	if (engaged && (k == XK_Shift_L || k == XK_Shift_R)) check_at = now() + ICON_DELAY;
+	if (engaged && (k == XK_Shift_L || k == XK_Shift_R)) {
+		last_shift = now();
+		check_at = last_shift + ICON_DELAY;
+		second_check = 1;
+	}
 }
 
 static int ignore_errors(Display *dpy, XErrorEvent *e) { (void)dpy; (void)e; return 0; }
@@ -406,9 +439,18 @@ int main(void)
 		if (engaged && (check_at ? t >= check_at : t - last_check_icon >= ICON_PERIOD))
 			check_crosshair(check_at ? "after Shift" : "periodic");
 		if (engaged && !locked) check_centre();
+		else if (engaged && t - last_shift < 0.6 && locked_since < last_shift) { /* Shift while locked: SDL's centring means it ended */
+			int px, py;
+			pointer(&px, &py);
+			if (px == bx + bw / 2 && py == by + bh / 2) {
+				check_at = 0;
+				second_check = off_votes = 0;
+				set_lock(NONE, "centred after Shift");
+			}
+		}
 		if (recheck) continue;
 		struct pollfd p = { ConnectionNumber(d), POLLIN, 0 };
-		int wait_ms = engaged && !locked ? 10 : 1000;
+		int wait_ms = !engaged ? 1000 : !locked ? 10 : now() - last_shift < 0.6 ? 5 : 1000;
 		if (check_at) {
 			int left = (int)((check_at - now()) * 1000) + 1;
 			if (left < wait_ms) wait_ms = left < 1 ? 1 : left;
