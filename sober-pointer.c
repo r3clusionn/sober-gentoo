@@ -19,8 +19,7 @@
  * screen, so 150 ms after every Shift press (XInput2 raw key events, no grab)
  * and every 2 s while Sober has focus, a 69x69 square there is read and the
  * ring looked for: white at radius ~23 with black edges inside and out.
- * While locked the barriers are off, so turning only stops at the screen
- * edge; on unlock the pointer goes to the middle of Roblox's screen, as on
+ * While locked the barriers are off; on unlock the pointer goes to the middle of Roblox's screen, as on
  * Windows. A lock counts as on after one check sees the crosshair, as off
  * after two in a row 0.3 s apart don't (the score dips while turning). When a
  * lock starts or ends SDL also puts the pointer on the window's exact centre
