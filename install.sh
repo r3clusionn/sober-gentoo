@@ -4,7 +4,7 @@
 set -eu
 cd "$(dirname "$0")"
 mkdir -p "$HOME/.local/bin" "$HOME/.local/opt/flatpak/tools"
-cc -O2 -o sober-pointer sober-pointer.c $(pkg-config --cflags --libs x11 xi xfixes)
+cc -O2 -o sober-pointer sober-pointer.c $(pkg-config --cflags --libs x11 xi xfixes) -lm
 install -m 755 bin/flatpak bin/sober bin/voidstrap sober-pointer "$HOME/.local/bin/"
 install -m 755 flatpak/build.sh flatpak/fetch.sh "$HOME/.local/opt/flatpak/tools/"
 echo "installed; next: ~/.local/opt/flatpak/tools/build.sh"
